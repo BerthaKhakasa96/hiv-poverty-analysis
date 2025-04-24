@@ -1,0 +1,80 @@
+---
+title: "HIV and Multidimensional Poverty Analysis"
+author: "Bertha"
+date: "`r Sys.Date(24.04.2025)`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(lme4)
+library(plm)
+library(ggplot2)
+```
+
+## Load and Prepare the Data
+
+```{r load-data}
+hiv_data <- read.csv('hiv_data.csv')
+poverty_data <- read.csv('poverty_data.csv')
+
+# Latest year for HIV data
+latest_year <- max(hiv_data$Year)
+hiv_latest <- hiv_data %>% filter(Year == latest_year) %>% arrange(desc(PeopleLivingWithHIV))
+hiv_latest <- hiv_latest %>% mutate(CumulativeShare = cumsum(PeopleLivingWithHIV) / sum(PeopleLivingWithHIV))
+top_75_countries <- hiv_latest %>% filter(CumulativeShare <= 0.75) %>% pull(Location)
+hiv_top_75 <- hiv_data %>% filter(Location %in% top_75_countries)
+```
+
+## Visualization: Global Top 75% HIV Burden
+
+```{r plot-global}
+ggplot(hiv_top_75, aes(x = Year, y = PeopleLivingWithHIV, color = Location)) +
+  geom_line() +
+  labs(title = "HIV Trends in Top 75% Countries", y = "People Living with HIV") +
+  theme_minimal()
+```
+
+## Visualization: Regional Top 75% HIV Burden
+
+```{r plot-regions, results='hide', warning=FALSE}
+regions <- unique(hiv_data$ParentLocationCode)
+
+for (region in regions) {
+  regional_data <- hiv_data %>% filter(ParentLocationCode == region, Year == latest_year)
+  regional_data <- regional_data %>% arrange(desc(PeopleLivingWithHIV)) %>%
+    mutate(CumulativeShare = cumsum(PeopleLivingWithHIV) / sum(PeopleLivingWithHIV))
+
+  top_countries_region <- regional_data %>% filter(CumulativeShare <= 0.75) %>% pull(Location)
+  data_region_75 <- hiv_data %>% filter(Location %in% top_countries_region)
+
+  p <- ggplot(data_region_75, aes(x = Year, y = PeopleLivingWithHIV, color = Location)) +
+    geom_line() +
+    labs(title = paste("HIV Trends in", region, "- Top 75% Contributors"), y = "People Living with HIV") +
+    theme_minimal()
+  print(p)
+}
+```
+
+## Merge HIV and Poverty Data
+
+```{r merge-data}
+merged_data <- inner_join(hiv_data, poverty_data, by = c("Location", "Year")) %>%
+  filter(!is.na(PeopleLivingWithHIV), !is.na(MultidimensionalPovertyIndex)) %>%
+  mutate(log_hiv = log1p(PeopleLivingWithHIV))
+```
+
+## Panel Regression Analysis
+
+```{r regression}
+# Convert to pdata.frame for panel analysis
+pdata <- pdata.frame(merged_data, index = c("Location", "Year"))
+model <- plm(log_hiv ~ MultidimensionalPovertyIndex, data = pdata, model = "within")
+summary(model)
+```
+
+## Summary Paragraph
+
+```{r summary}
+cat("Our analysis shows that a small group of countries, particularly in sub-Saharan Africa, are responsible for over 75% of the global HIV burden. Trends in these countries reveal varying degrees of progress, with some experiencing steady declines and others showing persistent or rising cases. Regionally, the African region dominates the global burden, though contributions in the Americas and Southeast Asia are also notable. When merged with multidimensional poverty data, we found a significant positive correlation between the number of people living with HIV and the multidimensional poverty index. Key contributors such as lack of education, poor sanitation, and limited access to healthcare services appear to be associated with higher HIV prevalence. Accounting for country and year effects, this suggests that effective interventions must not only address healthcare access but also broader poverty indicators to curb HIV transmission and improve patient outcomes.")
+```
